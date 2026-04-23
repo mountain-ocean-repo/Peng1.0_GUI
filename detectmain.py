@@ -21,6 +21,7 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from scipy import stats
+import openpyxl
 
 from ui import ui_detectmain
 from camera import Camera
@@ -54,42 +55,17 @@ class DetectMain(QWidget):
 
 
 
-        # tableview for the linear img, the concentration and RGB are known, to get the chart
-        num = [1, 2, 3, 4, 5]
-        con = [1, 10, 20, 30, 40]
-        green = [79.48, 90.13, 102.62, 124.11, 146.29]
-        blue = [74.04, 78.43, 90.29, 110.84, 132.29]
-        red = [79.49, 90.13, 102.45, 125.30, 145.29]
-        cols = 5
-        con_rgb_list = []
-        for i in range(len(con)):
-            con_rgb_list.append(str(num[i]))
-            con_rgb_list.append(str(con[i]))
-            con_rgb_list.append(str(green[i]))
-            con_rgb_list.append(str(blue[i]))
-            con_rgb_list.append(str(red[i]))
-        model = QStandardItemModel()
-        model.setColumnCount(cols)
-        for row in range(len(con)):
-            for col in range(cols):
-                index = row*cols+col
-                item = QStandardItem(con_rgb_list[index])
-                model.setItem(row, col, item)
+        # Linear regression: read source data (full precision for the fit)
+        lin_headers, lin_rows = self._read_excel('./interface/linear/table/linear_regression_table.xlsx')
+        ycol = self._first_color_index(lin_headers)
+        con_lin = [r[lin_headers.index("Con.")] for r in lin_rows]
+        y_channel = [r[ycol] for r in lin_rows]
+        y_label = lin_headers[ycol]
 
-        model.setHeaderData(0, Qt.Horizontal, "No.")
-        model.setHeaderData(1, Qt.Horizontal, "Con.")
-        model.setHeaderData(2, Qt.Horizontal, "Green")
-        model.setHeaderData(3, Qt.Horizontal, "Blue")
-        model.setHeaderData(4, Qt.Horizontal, "Red")
-
-        self.ui.tabviewOrig.setModel(model)
-        self.ui.tabviewOrig.verticalHeader().hide()
-#        self.ui.tabviewOrig.setHorizontalHeader(QHeaderView())
-        self.ui.tabviewOrig.setColumnWidth(0, self.ui.tabviewOrig.width()/2)#+16)
-        self.ui.tabviewOrig.setColumnWidth(1, self.ui.tabviewOrig.width()/2)#+16)
-        self.ui.tabviewOrig.setColumnWidth(2, self.ui.tabviewOrig.width()/2)#+16)
-        self.ui.tabviewOrig.setColumnWidth(3, self.ui.tabviewOrig.width()/2)#+16)
-        self.ui.tabviewOrig.setColumnWidth(4, self.ui.tabviewOrig.width()/2)#+16)
+        # Linear regression display table: read from only_table/
+        disp_headers, disp_rows = self._read_excel(
+            './interface/linear/only_table/linear_regression_table.xlsx')
+        self._populate_tableview(self.ui.tabviewOrig, disp_headers, disp_rows)
 
 
 
@@ -100,8 +76,8 @@ class DetectMain(QWidget):
                 'size': 13,
                 }
 
-        x = [1, 10, 20, 30, 40]
-        y = [79.4798923817615, 90.1310552500655, 102.6154051172710, 124.1063063063060, 146.2869718309860]
+        x = con_lin
+        y = y_channel
         slope, intercept, r, p, std_err = stats.linregress(x, y)
         R2 = pow(r, 2)
         def myfunc(x):
@@ -112,12 +88,12 @@ class DetectMain(QWidget):
 #        print('text=', text)
 #        print("y = {:.2f}*x+{:.2f}".format(slope, intercept))
 
-        rgb_G = [75.74, 120.51, 139.03, 75.73, 126.45, 139.87]
-        con = []
-        for item_G in rgb_G:
-            con_temp = (item_G - intercept)/slope
-            con.append(con_temp)
-        print('con: ', con)
+        # Detection: read detection-source data, compute predicted concentrations
+        det_headers, det_rows = self._read_excel('./interface/detect/table/detection_table.xlsx')
+        dcol = self._first_color_index(det_headers)
+        det_channel = [r[dcol] for r in det_rows]
+        con_pred = [(v - intercept) / slope for v in det_channel]
+        print('con: ', con_pred)
 
 #        plt.plot(x, y, 'k')
         plt.title('Linear Regression and ML-assisted HT-Detection', fontdict=font, fontsize=15)
@@ -128,13 +104,13 @@ class DetectMain(QWidget):
                 color=(0, 0, 0, 1)) # #069AF3
         # plt.text(61, 143, r'$\cos(2 \pi t) \exp(-t)$', fontdict=font)
         plt.xlabel('Concentration of Hg$^{2+}$ (μM)', fontdict=font, fontsize=13)
-        plt.ylabel('Green Value', fontdict=font, fontsize=13)
+        plt.ylabel('{} Value'.format(y_label), fontdict=font, fontsize=13)
 
 
 
         plt.scatter(x,y, color='#07b553', linewidths=4, zorder=1) #  #0343DF #0db838
         plt.plot(x, mymodel, color='#81e68e', linewidth=3,linestyle='--', zorder=2) # #0db838 #069AF3
-        plt.scatter(con, rgb_G, color='#ff7f0e', linewidths=4, zorder=3)
+        plt.scatter(con_pred, det_channel, color='#ff7f0e', linewidths=4, zorder=3)
 
 
 
@@ -144,12 +120,9 @@ class DetectMain(QWidget):
 
         marker_color = '#ff7f0e'
         marker_size = 10
-        plt.text(con[0]+1, rgb_G[0], '({:.2f},{:.2f})'.format(con[0], rgb_G[0]),fontsize=marker_size,rotation=0,color=marker_color)
-        plt.text(con[1]-1, rgb_G[1]-4, '({:.2f},{:.2f})'.format(con[1], rgb_G[1]),fontsize=marker_size,rotation=0,color=marker_color)
-        plt.text(con[2]-7.5, rgb_G[2]-0.5, '({:.2f},{:.2f})'.format(con[2], rgb_G[2]),fontsize=marker_size,rotation=0,color=marker_color)
-        plt.text(con[3]+1, rgb_G[3]-3, '({:.2f},{:.2f})'.format(con[3], rgb_G[3]),fontsize=marker_size,rotation=0,color=marker_color)
-        plt.text(con[4]+1, rgb_G[4]-1, '({:.2f},{:.2f})'.format(con[4], rgb_G[4]),fontsize=marker_size,rotation=0,color=marker_color)
-        plt.text(con[5]-5.5, rgb_G[5]+2.5, '({:.2f},{:.2f})'.format(con[5], rgb_G[5]),fontsize=marker_size,rotation=0,color=marker_color)
+        for cx, cy in zip(con_pred, det_channel):
+            plt.text(cx + 1, cy, '({:.2f},{:.2f})'.format(cx, cy),
+                     fontsize=marker_size, rotation=0, color=marker_color)
 
 
         # for x, y in zip(con[0:3], rgb_G[0:3]):
@@ -160,48 +133,60 @@ class DetectMain(QWidget):
 
 
 
-        # tableview for the recognized img, the concentration and RGB are NOT known
-        num = [1, 2, 3, 4, 5, 6]
-        rgb_B = [65.13, 108.38, 125.03, 72.40, 112.34, 122.40]
-        rgb_R = [77.99, 120.41, 138.03, 76.18, 125.52, 141.62]
-        rgb_con_list = []
-        cols = 5
-        for i in range(len(rgb_G)):
-            rgb_con_list.append(str(num[i]))
-            rgb_con_list.append(str(round(con[i],2)))
-            rgb_con_list.append(str(round(rgb_G[i],2)))
-            rgb_con_list.append(str(rgb_B[i]))
-            rgb_con_list.append(str(rgb_R[i]))
-        model = QStandardItemModel()
-        model.setColumnCount(cols)
-        for row in range(len(rgb_G)):
-            for col in range(cols):
-                index = row*cols+col
-                item = QStandardItem(rgb_con_list[index])
-                model.setItem(row, col, item)
-
-        model.setHeaderData(0, Qt.Horizontal, "No.")
-        model.setHeaderData(1, Qt.Horizontal, "Con.")
-        model.setHeaderData(2, Qt.Horizontal, "Green")
-        model.setHeaderData(3, Qt.Horizontal, "Blue")
-        model.setHeaderData(4, Qt.Horizontal, "Red")
+        # Detection display table: read from only_table/
+        det_disp_headers, det_disp_rows = self._read_excel(
+            './interface/detect/only_table/detection_table.xlsx')
+        self._populate_tableview(self.ui.tabviewRecg, det_disp_headers, det_disp_rows)
 
 
-        self.ui.tabviewRecg.setModel(model)
-        self.ui.tabviewRecg.verticalHeader().hide()
-#        self.ui.tabviewRecg.setHorizontalHeader(QHeaderView())
-        self.ui.tabviewRecg.setColumnWidth(0, self.ui.tabviewRecg.width()/2)#+16)
-        self.ui.tabviewRecg.setColumnWidth(1, self.ui.tabviewRecg.width()/2)#+16)
-        self.ui.tabviewRecg.setColumnWidth(2, self.ui.tabviewRecg.width()/2)#+16)
-        self.ui.tabviewRecg.setColumnWidth(3, self.ui.tabviewRecg.width()/2)#+16)
-        self.ui.tabviewRecg.setColumnWidth(4, self.ui.tabviewRecg.width()/2)#+16)
-
-
-        self.origImg ='./imgs/linearRegressionImg.jpg'
-        self.recgImg ='./imgs/detectionImg.jpg'
+        self.origImg = './interface/linear/image/linear_regression_image.jpg'
+        self.recgImg = './interface/detect/image/detection_image.jpg'
 
         self.ui.labelOrigImg.setPixmap(QPixmap(self.origImg).scaled(self.ui.labelRecgImg.width(), self.ui.labelRecgImg.height(), Qt.KeepAspectRatio))
         self.ui.labelRecgImg.setPixmap(QPixmap(self.recgImg).scaled(self.ui.labelRecgImg.width(), self.ui.labelRecgImg.height(), Qt.KeepAspectRatio))
+
+        self.ui.progressBar.setValue(100)
+        try:
+            with open('./interface/detect/time.txt', 'r', encoding='utf-8') as f:
+                raw = f.read().strip()
+            digits = ''.join(ch for ch in raw if ch.isdigit())
+            if digits:
+                self.ui.lcdNumber.display(int(digits))
+        except OSError:
+            pass
+
+    @staticmethod
+    def _read_excel(path):
+        wb = openpyxl.load_workbook(path, data_only=True)
+        ws = wb.active
+        it = ws.iter_rows(values_only=True)
+        headers = [str(h) for h in next(it)]
+        rows = [r for r in it if any(c is not None for c in r)]
+        return headers, rows
+
+    @staticmethod
+    def _first_color_index(headers):
+        return headers.index("Con.") + 1
+
+    @staticmethod
+    def _populate_tableview(view, headers, rows):
+        model = QStandardItemModel()
+        model.setColumnCount(len(headers))
+        for c, h in enumerate(headers):
+            model.setHeaderData(c, Qt.Horizontal, h)
+        for r, row in enumerate(rows):
+            for c, val in enumerate(row):
+                if headers[c] == "No.":
+                    text = str(int(val))
+                elif isinstance(val, (int, float)):
+                    text = "{:.2f}".format(round(float(val), 2))
+                else:
+                    text = "" if val is None else str(val)
+                model.setItem(r, c, QStandardItem(text))
+        view.setModel(model)
+        view.verticalHeader().hide()
+        for c in range(len(headers)):
+            view.setColumnWidth(c, view.width() // 2)
 
 
 # self.ui.labelOrigImg.width(),
