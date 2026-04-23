@@ -1,6 +1,7 @@
 # This Python file uses the following encoding: utf-8
 
 import sys
+import os
 from PySide6.QtWidgets import (QMainWindow, QFileDialog,QColorDialog, QComboBox,
                                 QDialog, QFontComboBox,QTextEdit, QInputDialog,
                                 QLineEdit, QMenu, QMessageBox,QProgressBar, QToolBar,
@@ -61,6 +62,7 @@ class DetectMain(QWidget):
         con_lin = [r[lin_headers.index("Con.")] for r in lin_rows]
         y_channel = [r[ycol] for r in lin_rows]
         y_label = lin_headers[ycol]
+        channel_color = self.CHANNEL_COLORS.get(y_label, '#2ca02c')
 
         # Linear regression display table: read from only_table/
         disp_headers, disp_rows = self._read_excel(
@@ -98,18 +100,29 @@ class DetectMain(QWidget):
 #        plt.plot(x, y, 'k')
         plt.title('Linear Regression and ML-assisted HT-Detection', fontdict=font, fontsize=15)
 
-        plt.text(4, 135, "Y = {:.4f} * X+{:.2f} ,  R$^2$ = {:.4f}".format(slope, intercept, R2),
-                backgroundcolor='#81e68e', fontsize=16,
-                fontstyle='italic', fontfamily='times new roman',
-                color=(0, 0, 0, 1)) # #069AF3
+        # Formula overlay: keep clear of the regression line by docking to the
+        # corner opposite the slope direction; axes-fraction coords keep it
+        # stable across data scales.
+        if slope >= 0:
+            tx, ha = 0.02, 'left'
+        else:
+            tx, ha = 0.98, 'right'
+        self.ax.text(tx, 0.96,
+                "Y = {:.4f} * X+{:.2f} ,  R$^2$ = {:.4f}".format(slope, intercept, R2),
+                transform=self.ax.transAxes,
+                ha=ha, va='top',
+                fontsize=16, fontstyle='italic', fontfamily='times new roman',
+                color=(0, 0, 0, 1),
+                bbox=dict(facecolor=channel_color, alpha=0.5, edgecolor='none',
+                          boxstyle='round,pad=0.3'))
         # plt.text(61, 143, r'$\cos(2 \pi t) \exp(-t)$', fontdict=font)
-        plt.xlabel('Concentration of Hg$^{2+}$ (μM)', fontdict=font, fontsize=13)
+        plt.xlabel('Concentration of AA (μM)', fontdict=font, fontsize=13) #'Concentration of Hg$^{2+}$ (μM)'
         plt.ylabel('{} Value'.format(y_label), fontdict=font, fontsize=13)
 
 
 
-        plt.scatter(x,y, color='#07b553', linewidths=4, zorder=1) #  #0343DF #0db838
-        plt.plot(x, mymodel, color='#81e68e', linewidth=3,linestyle='--', zorder=2) # #0db838 #069AF3
+        plt.scatter(x, y, color=channel_color, linewidths=4, zorder=1)
+        plt.plot(x, mymodel, color=channel_color, linewidth=3, linestyle='--', alpha=0.7, zorder=2)
         plt.scatter(con_pred, det_channel, color='#ff7f0e', linewidths=4, zorder=3)
 
 
@@ -120,9 +133,13 @@ class DetectMain(QWidget):
 
         marker_color = '#ff7f0e'
         marker_size = 10
+        # Offset annotations in pixel space so labels never land on top of the marker,
+        # regardless of the data range.
         for cx, cy in zip(con_pred, det_channel):
-            plt.text(cx + 1, cy, '({:.2f},{:.2f})'.format(cx, cy),
-                     fontsize=marker_size, rotation=0, color=marker_color)
+            plt.annotate('({:.2f},{:.2f})'.format(cx, cy),
+                         xy=(cx, cy), xytext=(8, 8),
+                         textcoords='offset points',
+                         fontsize=marker_size, color=marker_color)
 
 
         # for x, y in zip(con[0:3], rgb_G[0:3]):
@@ -139,11 +156,15 @@ class DetectMain(QWidget):
         self._populate_tableview(self.ui.tabviewRecg, det_disp_headers, det_disp_rows)
 
 
-        self.origImg = './interface/linear/image/linear_regression_image.jpg'
-        self.recgImg = './interface/detect/image/detection_image.jpg'
-
-        self.ui.labelOrigImg.setPixmap(QPixmap(self.origImg).scaled(self.ui.labelRecgImg.width(), self.ui.labelRecgImg.height(), Qt.KeepAspectRatio))
-        self.ui.labelRecgImg.setPixmap(QPixmap(self.recgImg).scaled(self.ui.labelRecgImg.width(), self.ui.labelRecgImg.height(), Qt.KeepAspectRatio))
+        self.origImg = self._resolve_image('./interface/linear/image/linear_regression_image')
+        self.recgImg = self._resolve_image('./interface/detect/image/detection_image')
+        self._origPixmap = QPixmap(self.origImg)
+        self._recgPixmap = QPixmap(self.recgImg)
+        self.ui.labelOrigImg.setMinimumSize(1, 1)
+        self.ui.labelRecgImg.setMinimumSize(1, 1)
+        self.ui.labelOrigImg.setAlignment(Qt.AlignCenter)
+        self.ui.labelRecgImg.setAlignment(Qt.AlignCenter)
+        self._update_image_scales()
 
         self.ui.progressBar.setValue(100)
         try:
@@ -154,6 +175,33 @@ class DetectMain(QWidget):
                 self.ui.lcdNumber.display(int(digits))
         except OSError:
             pass
+
+    CHANNEL_COLORS = {
+        'Red':   '#d62728',
+        'Green': '#2ca02c',
+        'Blue':  '#1f77b4',
+    }
+
+    IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_image_scales()
+
+    def _update_image_scales(self):
+        for label, pix in ((getattr(self.ui, 'labelOrigImg', None), getattr(self, '_origPixmap', None)),
+                           (getattr(self.ui, 'labelRecgImg', None), getattr(self, '_recgPixmap', None))):
+            if label is None or pix is None or pix.isNull():
+                continue
+            label.setPixmap(pix.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    @classmethod
+    def _resolve_image(cls, base_no_ext):
+        for ext in cls.IMAGE_EXTENSIONS:
+            candidate = base_no_ext + ext
+            if os.path.exists(candidate):
+                return candidate
+        return base_no_ext + cls.IMAGE_EXTENSIONS[0]
 
     @staticmethod
     def _read_excel(path):
