@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QFileDialog,QColorDialog, QComboBox,
                                 QHeaderView)
 from PySide6.QtGui import (QAction, QGuiApplication, QIcon, QKeySequence, QStandardItemModel,
                             QStandardItem, QImage, QPixmap)
-from PySide6.QtCore import (QUrl, Qt, Slot, Signal, QDir)
+from PySide6.QtCore import (QUrl, Qt, Slot, Signal, QDir, QEvent)
 
 from PySide6.QtPrintSupport import (QAbstractPrintDialog, QPrinter,
                                     QPrintDialog, QPrintPreviewDialog)
@@ -63,6 +63,7 @@ class DetectMain(QWidget):
         y_channel = [r[ycol] for r in lin_rows]
         y_label = lin_headers[ycol]
         channel_color = self.CHANNEL_COLORS.get(y_label, '#2ca02c')
+        detect_color = self.CONTRAST_COLORS.get(y_label, '#ff7f0e')
 
         # Linear regression display table: read from only_table/
         disp_headers, disp_rows = self._read_excel(
@@ -98,7 +99,7 @@ class DetectMain(QWidget):
         print('con: ', con_pred)
 
 #        plt.plot(x, y, 'k')
-        plt.title('Linear Regression and ML-assisted HT-Detection', fontdict=font, fontsize=15)
+        plt.title('Linear Regression and Detection of Real Samples', fontdict=font, fontsize=15) # 'Linear Regression and ML-assisted HT-Detection'
 
         # Formula overlay: keep clear of the regression line by docking to the
         # corner opposite the slope direction; axes-fraction coords keep it
@@ -123,7 +124,7 @@ class DetectMain(QWidget):
 
         plt.scatter(x, y, color=channel_color, linewidths=4, zorder=1)
         plt.plot(x, mymodel, color=channel_color, linewidth=3, linestyle='--', alpha=0.7, zorder=2)
-        plt.scatter(con_pred, det_channel, color='#ff7f0e', linewidths=4, zorder=3)
+        plt.scatter(con_pred, det_channel, color=detect_color, linewidths=4, zorder=3)
 
 
 
@@ -131,22 +132,48 @@ class DetectMain(QWidget):
         plt.legend(('experimental data', 'linear regression', 'detection result'),
                    loc='lower right', shadow=True)
 
-        marker_color = '#ff7f0e'
-        marker_size = 10
-        # Offset annotations in pixel space so labels never land on top of the marker,
-        # regardless of the data range.
-        for cx, cy in zip(con_pred, det_channel):
+        marker_color = detect_color
+        marker_size = 9   # one size smaller than before
+        # 28 px between bands comfortably exceeds the rendered label-box height
+        # (~19 px at fontsize 9 with pad=1) so adjacent-band labels cannot overlap
+        # vertically. Anchored at each point's x preserves left-to-right order; x
+        # collisions bump the label to the next band. label_half_w stays pessimistic
+        # so tight clusters still fan out across distinct bands.
+        dx_global = -3
+        order = sorted(range(len(con_pred)), key=lambda i: con_pred[i])
+        x_span = (max(con_pred) - min(con_pred)) if len(con_pred) > 1 else 1.0
+        label_half_w = max(x_span * 0.11, 1e-6)
+        dy_cycle = [-26, -54, -82, -110, 26, 54, 82, 110]
+        band_intervals = {dy: [] for dy in dy_cycle}
+        assigned_dy = [dy_cycle[0]] * len(con_pred)
+        for idx in order:
+            xL = con_pred[idx] - label_half_w
+            xR = con_pred[idx] + label_half_w
+            for dy in dy_cycle:
+                collides = any(max(xL, l) < min(xR, r) for l, r in band_intervals[dy])
+                if not collides:
+                    band_intervals[dy].append((xL, xR))
+                    assigned_dy[idx] = dy
+                    break
+        for i, (cx, cy) in enumerate(zip(con_pred, det_channel)):
             plt.annotate('({:.2f},{:.2f})'.format(cx, cy),
-                         xy=(cx, cy), xytext=(8, 8),
+                         xy=(cx, cy), xytext=(dx_global, assigned_dy[i]),
                          textcoords='offset points',
-                         fontsize=marker_size, color=marker_color)
+                         ha='center', va='center',
+                         fontsize=marker_size, color=marker_color,
+                         bbox=dict(facecolor='white', alpha=0.75,
+                                   edgecolor='none', pad=1.0),
+                         arrowprops=dict(arrowstyle='-', color='lightgray',
+                                         lw=0.8, linestyle='--', alpha=0.9))
+
+        # Modest axis padding so labels stay inside the plot frame at any window size.
+        y0, y1 = self.ax.get_ylim()
+        yr = y1 - y0
+        self.ax.set_ylim(y0 - yr * 0.12, y1 + yr * 0.06)
 
 
-        # for x, y in zip(con[0:3], rgb_G[0:3]):
-        #     plt.text(x+1, y, '({:.2f},{:.2f})'.format(x,y),fontsize=10,rotation=0,color='#ff7f0e') #f'(x: {x}, y: {y})')
-        # for x, y in zip(con[3:6], rgb_G[3:6]):
-        #     plt.text(x+1, y, '({:.2f},{:.2f})'.format(x,y),fontsize=10,rotation=0,color='#ff7f0e') #f'(x: {x}, y: {y})')
-        plt.show()
+        # Render into the embedded Qt canvas only — no standalone pyplot window.
+        self.canvas.draw()
 
 
 
@@ -160,10 +187,13 @@ class DetectMain(QWidget):
         self.recgImg = self._resolve_image('./interface/detect/image/detection_image')
         self._origPixmap = QPixmap(self.origImg)
         self._recgPixmap = QPixmap(self.recgImg)
-        self.ui.labelOrigImg.setMinimumSize(1, 1)
-        self.ui.labelRecgImg.setMinimumSize(1, 1)
-        self.ui.labelOrigImg.setAlignment(Qt.AlignCenter)
-        self.ui.labelRecgImg.setAlignment(Qt.AlignCenter)
+        for lbl in (self.ui.labelOrigImg, self.ui.labelRecgImg):
+            lbl.setMinimumSize(1, 1)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setScaledContents(False)
+            # Event filter catches the label's own resize, which fires reliably
+            # even when DetectMain itself isn't in a layout (the UI widget is).
+            lbl.installEventFilter(self)
         self._update_image_scales()
 
         self.ui.progressBar.setValue(100)
@@ -182,18 +212,54 @@ class DetectMain(QWidget):
         'Blue':  '#1f77b4',
     }
 
+    # High-contrast partners for each regression channel: complementary-ish hues
+    # that stay clearly separated from the corresponding CHANNEL_COLORS entry.
+    CONTRAST_COLORS = {
+        'Red':   '#17becf',   # cyan vs red
+        'Green': '#e377c2',   # magenta vs green
+        'Blue':  '#ff7f0e',   # orange vs blue
+    }
+
     IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_image_scales()
 
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize and obj in (
+                getattr(self.ui, 'labelOrigImg', None),
+                getattr(self.ui, 'labelRecgImg', None)):
+            self._scale_label(obj)
+        return super().eventFilter(obj, event)
+
     def _update_image_scales(self):
-        for label, pix in ((getattr(self.ui, 'labelOrigImg', None), getattr(self, '_origPixmap', None)),
-                           (getattr(self.ui, 'labelRecgImg', None), getattr(self, '_recgPixmap', None))):
-            if label is None or pix is None or pix.isNull():
-                continue
-            label.setPixmap(pix.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        for label in (getattr(self.ui, 'labelOrigImg', None),
+                      getattr(self.ui, 'labelRecgImg', None)):
+            if label is not None:
+                self._scale_label(label)
+
+    def _scale_label(self, label):
+        if label is getattr(self.ui, 'labelOrigImg', None):
+            pix = getattr(self, '_origPixmap', None)
+        elif label is getattr(self.ui, 'labelRecgImg', None):
+            pix = getattr(self, '_recgPixmap', None)
+        else:
+            return
+        if pix is None or pix.isNull():
+            return
+        lw, lh = label.width(), label.height()
+        if lw <= 0 or lh <= 0:
+            return
+        # KeepAspectRatioByExpanding fills the target rectangle completely without
+        # distortion; we then crop-center so the label never exceeds its own bounds.
+        scaled = pix.scaled(lw, lh, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        sw, sh = scaled.width(), scaled.height()
+        if sw > lw or sh > lh:
+            x = max(0, (sw - lw) // 2)
+            y = max(0, (sh - lh) // 2)
+            scaled = scaled.copy(x, y, min(lw, sw), min(lh, sh))
+        label.setPixmap(scaled)
 
     @classmethod
     def _resolve_image(cls, base_no_ext):
