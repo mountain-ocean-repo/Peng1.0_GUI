@@ -11,7 +11,7 @@ from PySide6.QtMultimedia import (QAudioInput, QCamera, QCameraDevice,
                                   QImageCapture, QMediaCaptureSession,
                                   QMediaDevices, QMediaMetaData,
                                   QMediaRecorder)
-from PySide6.QtWidgets import QDialog, QMainWindow, QMessageBox, QWidget
+from PySide6.QtWidgets import QDialog, QMainWindow, QMessageBox, QSplitter, QWidget
 from PySide6.QtGui import QAction, QActionGroup, QIcon, QImage, QPixmap
 from PySide6.QtCore import QDateTime, QDir, QTimer, Qt, Slot, qWarning, QObject
 
@@ -59,6 +59,7 @@ class Camera(QWidget):
 
         self._ui = Ui_Camera()
         self._ui.setupUi(self)
+        self._install_resizable_splitter()
 
         available_cameras = QMediaDevices.videoInputs()
         print("type-available_cameras = ", type(available_cameras))
@@ -80,6 +81,23 @@ class Camera(QWidget):
 
         # try to actually initialize camera & mic
         self.initialize()
+
+    def _install_resizable_splitter(self):
+        self._ui.horizontalLayout_8.removeWidget(self._ui.groupBox)
+        self._ui.horizontalLayout_8.removeWidget(self._ui.captureWidget)
+
+        splitter = QSplitter(Qt.Horizontal, self._ui.cameraWidget)
+        splitter.setObjectName("cameraSettingsSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(6)
+        splitter.addWidget(self._ui.groupBox)
+        splitter.addWidget(self._ui.captureWidget)
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([500, 100])
+
+        self._ui.verticalLayout_2.removeItem(self._ui.horizontalLayout_8)
+        self._ui.verticalLayout_2.addWidget(splitter)
 
     @Slot()
     def initialize(self):

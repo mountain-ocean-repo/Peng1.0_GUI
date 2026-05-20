@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QMainWindow, QFileDialog,QColorDialog, QComboBox,
                                 QDialog, QFontComboBox,QTextEdit, QInputDialog,
                                 QLineEdit, QMenu, QMessageBox,QProgressBar, QToolBar,
                                 QVBoxLayout, QWidget, QTreeView, QTableView, QFileSystemModel,
-                                QHeaderView)
+                                QHeaderView, QHBoxLayout, QSplitter)
 from PySide6.QtGui import (QAction, QGuiApplication, QIcon, QKeySequence, QStandardItemModel,
                             QStandardItem, QImage, QPixmap)
 from PySide6.QtCore import (QUrl, Qt, Slot, Signal, QDir, QEvent)
@@ -33,6 +33,7 @@ class DetectMain(QWidget):
         super().__init__()
         self.ui = ui_detectmain.Ui_Form()
         self.ui.setupUi(self)
+        self._install_resizable_splitters()
 
 #        #put the cameraWidget in cameraMainlVLayout
         self.mainCamera = Camera()
@@ -238,6 +239,75 @@ class DetectMain(QWidget):
                       getattr(self.ui, 'labelRecgImg', None)):
             if label is not None:
                 self._scale_label(label)
+
+    def _install_resizable_splitters(self):
+        self._install_linear_regression_splitter()
+        self._install_detection_splitter()
+
+    @staticmethod
+    def _configure_splitter(splitter, sizes):
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(6)
+        for index, stretch in enumerate(sizes):
+            splitter.setStretchFactor(index, stretch)
+        splitter.setSizes([size * 100 for size in sizes])
+
+    def _install_linear_regression_splitter(self):
+        self.ui.horizontalLayout_6.removeWidget(self.ui.tabWidget_2)
+        self.ui.verticalLayout_8.removeWidget(self.ui.label_2)
+        self.ui.verticalLayout_8.removeWidget(self.ui.tabviewOrig)
+
+        table_panel = QWidget(self.ui.cameraMainGroupBox)
+        table_panel.setObjectName("linearRegressionTablePanel")
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.addWidget(self.ui.label_2)
+        table_layout.addWidget(self.ui.tabviewOrig)
+
+        splitter = QSplitter(Qt.Horizontal, self.ui.cameraMainGroupBox)
+        splitter.setObjectName("linearRegressionSplitter")
+        splitter.addWidget(self.ui.tabWidget_2)
+        splitter.addWidget(table_panel)
+        self._configure_splitter(splitter, [5, 2])
+
+        self.ui.horizontalLayout_9.removeItem(self.ui.horizontalLayout_6)
+        self.ui.horizontalLayout_9.addWidget(splitter)
+
+    def _install_detection_splitter(self):
+        self.ui.verticalLayout_10.removeWidget(self.ui.tabWidget)
+        for widget in (self.ui.label_5, self.ui.progressBar,
+                       self.ui.label_9, self.ui.lcdNumber):
+            self.ui.horizontalLayout_2.removeWidget(widget)
+        self.ui.verticalLayout_9.removeWidget(self.ui.label_4)
+        self.ui.verticalLayout_9.removeWidget(self.ui.tabviewRecg)
+
+        image_panel = QWidget(self.ui.groupBox_3)
+        image_panel.setObjectName("detectionImagePanel")
+        image_layout = QVBoxLayout(image_panel)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.addWidget(self.ui.tabWidget)
+        progress_layout = QHBoxLayout()
+        progress_layout.addWidget(self.ui.label_5)
+        progress_layout.addWidget(self.ui.progressBar)
+        progress_layout.addWidget(self.ui.label_9)
+        progress_layout.addWidget(self.ui.lcdNumber)
+        image_layout.addLayout(progress_layout)
+
+        table_panel = QWidget(self.ui.groupBox_3)
+        table_panel.setObjectName("detectionTablePanel")
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.addWidget(self.ui.label_4)
+        table_layout.addWidget(self.ui.tabviewRecg)
+
+        splitter = QSplitter(Qt.Horizontal, self.ui.groupBox_3)
+        splitter.setObjectName("detectionSplitter")
+        splitter.addWidget(image_panel)
+        splitter.addWidget(table_panel)
+        self._configure_splitter(splitter, [5, 2])
+
+        self.ui.verticalLayout_11.removeItem(self.ui.horizontalLayout_4)
+        self.ui.verticalLayout_11.addWidget(splitter)
 
     def _scale_label(self, label):
         if label is getattr(self.ui, 'labelOrigImg', None):

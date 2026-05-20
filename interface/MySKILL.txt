@@ -115,7 +115,12 @@ x和y行分别是从./interface/linear/table/linear_regression_table.xlsx中读�
 figure区域的所有数字计算时不要四舍五入。
 
 
-
+只修改以下问题，不改动其他内容。
+拉动左右两个区域之间的间隔，能够改变两个区域的大小。现在程序中这种间隔不能被拉动，所以左右两边的区域大小不能被改变。
+左右区域分别是：
+Linear Regression Image区域和Table. Linear Regression区域；
+摄像头模块区域和Image、Video区域；
+Detection Image区域和Table. Detection区域。
 
 
 
